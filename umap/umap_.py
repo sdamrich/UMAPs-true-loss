@@ -27,18 +27,18 @@ from scipy.sparse import tril as sparse_tril, triu as sparse_triu
 import scipy.sparse.csgraph
 import numba
 
-import umap.distances as dist
+import umapns.distances as dist
 
-import umap.sparse as sparse
+import umapns.sparse as sparse
 
-from umap.utils import (
+from umapns.utils import (
     submatrix,
     ts,
     csr_unique,
     fast_knn_indices,
 )
-from umap.spectral import spectral_layout
-from umap.layouts import (
+from umapns.spectral import spectral_layout
+from umapns.layouts import (
     optimize_layout_euclidean,
     optimize_layout_generic,
     optimize_layout_inverse,
@@ -916,6 +916,7 @@ def simplicial_set_embedding(
     gamma,
     negative_sample_rate,
     n_epochs,
+    push_tail,
     init,
     random_state,
     metric,
@@ -928,6 +929,9 @@ def simplicial_set_embedding(
     euclidean_output=True,
     parallel=False,
     verbose=False,
+    log_samples=False,
+    log_losses=None,
+    log_embeddings=False
 ):
     """Perform a fuzzy simplicial set embedding, using a specified
     initialisation method and then minimizing the fuzzy set cross entropy
@@ -943,6 +947,9 @@ def simplicial_set_embedding(
         The 1-skeleton of the high dimensional fuzzy simplicial set as
         represented by a graph for which we require a sparse matrix for the
         (weighted) adjacency matrix.
+
+    push_tail: bool (optional, default False)
+        Specifies whether or not tail of negative samples should be pushed away from head.
 
     n_components: int
         The dimensionality of the euclidean space into which to embed the data.
@@ -1015,6 +1022,17 @@ def simplicial_set_embedding(
 
     verbose: bool (optional, default False)
         Whether to report information on the current progress of the algorithm.
+
+    log_samples: bool (optional, default False)
+        Specifies whether the sampled edges and negative samples should be logged.
+
+    log_losses: string (optional, default None)
+        Specifies if and how UMAP losses should be computed and logged. Default None logs no losses. "after" logs all
+        losses after each full epoch. "during" logs the actual UMAP loss during, the effective and purported ones after
+        each full epoch.
+
+    log_embeddings: bool (optional, default False)
+        Specifies if intermediate embeddings should be logged.
 
     Returns
     -------
@@ -1129,11 +1147,13 @@ def simplicial_set_embedding(
     ).astype(np.float32, order="C")
 
     if euclidean_output:
-        embedding = optimize_layout_euclidean(
+        embedding, stats = optimize_layout_euclidean(
             embedding,
             embedding,
             head,
             tail,
+            graph,
+            push_tail,
             n_epochs,
             n_vertices,
             epochs_per_sample,
@@ -1147,6 +1167,9 @@ def simplicial_set_embedding(
             verbose=verbose,
             densmap=densmap,
             densmap_kwds=densmap_kwds,
+            log_samples=log_samples,
+            log_losses=log_losses,
+            log_embeddings=log_embeddings
         )
     else:
         embedding = optimize_layout_generic(
@@ -1167,6 +1190,7 @@ def simplicial_set_embedding(
             tuple(output_metric_kwds.values()),
             verbose=verbose,
         )
+    aux_data.update(stats)
 
     if output_dens:
         if verbose:
@@ -1407,6 +1431,14 @@ class UMAP(BaseEstimator):
             * 'random': assign initial embedding positions at random.
             * A numpy array of initial embedding positions.
 
+    graph: scipy.sparse.coo_matrix (optional, default None)
+         The 1-skeleton of the high dimensional fuzzy simplicial set as
+        represented by a graph for which we require a sparse matrix for the
+        (weighted) adjacency matrix.
+
+    push_tail: bool (optional, default False)
+        Specifies whether or not tail of negative samples should be pushed away from head.
+
     min_dist: float (optional, default 0.1)
         The effective minimum distance between embedded points. Smaller values
         will result in a more clustered/clumped embedding where nearby points
@@ -1559,6 +1591,17 @@ class UMAP(BaseEstimator):
         UMAP assumption that we have a connected manifold can be problematic when you have points that are maximally
         different from all the rest of your data.  The connected manifold assumption will make such points have perfect
         similarity to a random set of other points.  Too many such points will artificially connect your space.
+
+    log_samples: bool (optional, default False)
+        Specifies whether the sampled edges and negative samples should be logged.
+
+    log_losses: string (optional, default None)
+        Specifies if and how UMAP losses should be computed and logged. Default None logs no losses. "after" logs all
+        losses after each full epoch. "during" logs the actual UMAP loss during, the effective and purported ones after
+        each full epoch.
+
+    log_embeddings: bool (optional, default False)
+        Specifies if intermediate embeddings should be logged.
     """
 
     def __init__(
@@ -1569,9 +1612,11 @@ class UMAP(BaseEstimator):
         metric_kwds=None,
         output_metric="euclidean",
         output_metric_kwds=None,
+        push_tail=False,
         n_epochs=None,
         learning_rate=1.0,
         init="spectral",
+        graph=None,
         min_dist=0.1,
         spread=1.0,
         low_memory=True,
@@ -1600,6 +1645,9 @@ class UMAP(BaseEstimator):
         dens_var_shift=0.1,
         output_dens=False,
         disconnection_distance=None,
+        log_samples=False,
+        log_losses=None,
+        log_embeddings=False
     ):
         self.n_neighbors = n_neighbors
         self.metric = metric
@@ -1607,8 +1655,10 @@ class UMAP(BaseEstimator):
         self.target_metric = target_metric
         self.metric_kwds = metric_kwds
         self.output_metric_kwds = output_metric_kwds
+        self.push_tail = push_tail
         self.n_epochs = n_epochs
         self.init = init
+        self.graph_= graph
         self.n_components = n_components
         self.repulsion_strength = repulsion_strength
         self.learning_rate = learning_rate
@@ -1643,8 +1693,14 @@ class UMAP(BaseEstimator):
 
         self.a = a
         self.b = b
+        self.log_samples = log_samples
+        self.log_losses = log_losses
+        self.log_embeddings= log_embeddings
 
     def _validate_parameters(self):
+        if self.graph_ is not None and self.target_metric in dist.DISCRETE_METRICS:
+            print("Warning: graph_ must be None if supervision is used in fit_transform or if UMAP models are added, \
+            multiplied or substracted or if densmap or output_dens are True.")
         if self.set_op_mix_ratio < 0.0 or self.set_op_mix_ratio > 1.0:
             raise ValueError("set_op_mix_ratio must be between 0.0 and 1.0")
         if self.repulsion_strength < 0.0:
@@ -2230,7 +2286,12 @@ class UMAP(BaseEstimator):
         if self.verbose:
             print("Construct fuzzy simplicial set")
 
-        if self.metric == "precomputed" and self._sparse_data:
+        if self.graph_ is not None:
+            self._sigmas = None
+            self._rhos = None
+            self.graph_dists_ = None
+
+        elif self.metric == "precomputed" and self._sparse_data:
             # For sparse precomputed distance matrices, we just argsort the rows to find
             # nearest neighbors. To make this easier, we expect matrices that are
             # symmetrical (so we can find neighbors by looking at rows in isolation,
@@ -2564,6 +2625,7 @@ class UMAP(BaseEstimator):
             if self.output_dens:
                 self.rad_orig_ = aux_data["rad_orig"][inverse]
                 self.rad_emb_ = aux_data["rad_emb"][inverse]
+            self.aux_data = aux_data
 
         if self.verbose:
             print(ts() + " Finished embedding")
@@ -2587,6 +2649,7 @@ class UMAP(BaseEstimator):
             self.repulsion_strength,
             self.negative_sample_rate,
             n_epochs,
+            self.push_tail,
             init,
             random_state,
             self._input_distance_func,
@@ -2599,6 +2662,9 @@ class UMAP(BaseEstimator):
             self.output_metric in ("euclidean", "l2"),
             self.random_state is None,
             self.verbose,
+            log_samples=self.log_samples,
+            log_losses=self.log_losses,
+            log_embeddings=self.log_embeddings
         )
 
     def fit_transform(self, X, y=None):
@@ -2645,6 +2711,7 @@ class UMAP(BaseEstimator):
                     self.transform_mode
                 )
             )
+
 
     def transform(self, X):
         """Transform X into the existing embedded space and return that

@@ -1,7 +1,21 @@
 import numpy as np
 import numba
-import umap.distances as dist
-from umap.utils import tau_rand_int
+import umapns.distances as dist
+from umapns.utils import tau_rand_int
+from umapns.my_utils import low_dim_sim_dist, \
+    my_log, \
+    compute_low_dim_psims, \
+    compute_low_dim_sims, \
+    reproducing_loss, \
+    expected_loss, \
+    reproducing_loss_keops, \
+    expected_loss_keops
+try:
+    import pykeops
+    pykeops_available = True
+except ImportError:
+    pykeops_available = False
+    print("Warning: pykeops not available")
 
 
 @numba.njit()
@@ -70,10 +84,12 @@ def _optimize_layout_euclidean_single_epoch(
     gamma,
     dim,
     move_other,
+    push_tail,
     alpha,
     epochs_per_negative_sample,
     epoch_of_next_negative_sample,
     epoch_of_next_sample,
+    negative_sample_rate,
     n,
     densmap_flag,
     dens_phi_sum,
@@ -85,11 +101,23 @@ def _optimize_layout_euclidean_single_epoch(
     dens_R,
     dens_mu,
     dens_mu_tot,
-):
+    log_samples = False,
+    log_losses = None
+) -> object:
+
+    # set up variables for logging samples and loss
+    pos_samples = np.zeros_like(epochs_per_sample)
+    neg_samples = - np.ones((len(epochs_per_sample), negative_sample_rate * 2))
+    loss_a = 0
+    loss_r = 0
+
     for i in numba.prange(epochs_per_sample.shape[0]):
         if epoch_of_next_sample[i] <= n:
             j = head[i]
             k = tail[i]
+            if log_samples or log_losses == "after":
+                pos_samples[i] = 1
+
 
             current = head_embedding[j]
             other = tail_embedding[k]
@@ -146,14 +174,20 @@ def _optimize_layout_euclidean_single_epoch(
                 if move_other:
                     other[d] += -grad_d * alpha
 
+            if log_losses == "during":
+                loss_a += my_log(low_dim_sim_dist(dist_squared, a, b, squared=True))
+
             epoch_of_next_sample[i] += epochs_per_sample[i]
 
             n_neg_samples = int(
                 (n - epoch_of_next_negative_sample[i]) / epochs_per_negative_sample[i]
             )
 
-            for p in range(n_neg_samples):
+            for j, p in enumerate(range(n_neg_samples)):
                 k = tau_rand_int(rng_state) % n_vertices
+
+                if log_samples or log_losses == "after":
+                    neg_samples[i, j] = k
 
                 other = tail_embedding[k]
 
@@ -175,10 +209,17 @@ def _optimize_layout_euclidean_single_epoch(
                     else:
                         grad_d = 4.0
                     current[d] += grad_d * alpha
+                    if push_tail:
+                        other[d] += -grad_d * alpha
+
+                if log_losses == "during":
+                    loss_r += my_log(1.0 - low_dim_sim_dist(dist_squared, a, b, squared=True))
 
             epoch_of_next_negative_sample[i] += (
                 n_neg_samples * epochs_per_negative_sample[i]
             )
+
+    return pos_samples, neg_samples, -loss_a, -loss_r
 
 
 def _optimize_layout_euclidean_densmap_epoch_init(
@@ -212,6 +253,8 @@ def optimize_layout_euclidean(
     tail_embedding,
     head,
     tail,
+    graph,
+    push_tail,
     n_epochs,
     n_vertices,
     epochs_per_sample,
@@ -225,6 +268,9 @@ def optimize_layout_euclidean(
     verbose=False,
     densmap=False,
     densmap_kwds={},
+    log_samples=False,
+    log_losses=None,
+    log_embeddings=False
 ):
     """Improve an embedding using stochastic gradient descent to minimize the
     fuzzy set cross entropy between the 1-skeletons of the high dimensional
@@ -244,6 +290,12 @@ def optimize_layout_euclidean(
         The indices of the heads of 1-simplices with non-zero membership.
     tail: array of shape (n_1_simplices)
         The indices of the tails of 1-simplices with non-zero membership.
+    graph: sparse matrix
+        The 1-skeleton of the high dimensional fuzzy simplicial set as
+        represented by a graph for which we require a sparse matrix for the
+        (weighted) adjacency matrix. Filtered wrt n_epochs.
+    push_tail: bool (optional, default False)
+        Specifies whether or not tail of negative samples should be pushed away from head.
     n_epochs: int
         The number of training epochs to use in optimization.
     n_vertices: int
@@ -273,11 +325,43 @@ def optimize_layout_euclidean(
         Whether to use the density-augmented densMAP objective
     densmap_kwds: dict (optional, default {})
         Auxiliary data for densMAP
+
+    log_samples: bool (optional, default False)
+        Specifies whether the sampled edges and negative samples should be logged.
+
+    log_losses: string (optional, default None)
+        Specifies if and how UMAP losses should be computed and logged. Default None logs no losses. "after" logs all
+        losses after each full epoch. "during" logs the actual UMAP loss during, the effective and purported ones after
+        each full epoch.
+
+    log_embeddings: bool (optional, default False)
+        Specifies if intermediate embeddings should be logged.
     Returns
     -------
     embedding: array of shape (n_samples, n_components)
         The optimized embedding.
+    stats: dict
+        Logged information.
     """
+
+    # initialize lists to record logs
+    if log_samples:
+        pos_samples = []
+        pos_samples_idx = []
+        neg_samples = []
+
+    if log_losses:
+        loss_a = []
+        loss_r = []
+        loss_a_reprod = []
+        loss_r_reprod = []
+        loss_a_exp = []
+        loss_r_exp = []
+    if log_embeddings:
+        embeddings = [head_embedding.copy()]  # first epoch does not updates, so initilization will be recorded twice
+
+    if not pykeops_available:
+        high_sim = np.array(graph.todense())
 
     dim = head_embedding.shape[1]
     move_other = head_embedding.shape[0] == tail_embedding.shape[0]
@@ -341,7 +425,7 @@ def optimize_layout_euclidean(
             dens_re_mean = 0
             dens_re_cov = 0
 
-        optimize_fn(
+        pos_samples_epoch, neg_samples_epoch, loss_a_epoch, loss_r_epoch = optimize_fn(
             head_embedding,
             tail_embedding,
             head,
@@ -354,10 +438,12 @@ def optimize_layout_euclidean(
             gamma,
             dim,
             move_other,
+            push_tail,
             alpha,
             epochs_per_negative_sample,
             epoch_of_next_negative_sample,
             epoch_of_next_sample,
+            negative_sample_rate,
             n,
             densmap_flag,
             dens_phi_sum,
@@ -369,14 +455,106 @@ def optimize_layout_euclidean(
             dens_R,
             dens_mu,
             dens_mu_tot,
+            log_samples,
+            log_losses
         )
+        # collect sampled edges
+        if log_samples:
+            pos_samples_idx_epoch = np.nonzero(pos_samples_epoch)
+            pos_samples_idx.append(pos_samples_idx_epoch[0])
+
+            pos_samples.append(np.stack([head[pos_samples_idx_epoch],
+                                         tail[pos_samples_idx_epoch]], axis=-1).astype(int))
+            mask_neg_samples = neg_samples_epoch != -1
+
+            neg_samples.append(np.stack([np.repeat(head, mask_neg_samples.sum(1)),
+                                         neg_samples_epoch[mask_neg_samples]], axis=1).astype(int))
+
+        # log embeddings
+        if log_embeddings:
+            embeddings.append(head_embedding.copy())
+
+        # log losses
+        if log_losses:
+            # collect actual loss functions
+            if log_losses == "during":
+                loss_a.append(loss_a_epoch)
+                loss_r.append(loss_r_epoch)
+            elif log_losses == "after":
+                # transform pos_samples idx of epoch to embeddings
+                pos_samples_idx_epoch = np.nonzero(pos_samples_epoch)
+                pos_heads_epoch = head[pos_samples_idx_epoch].astype(int)
+                pos_tails_epoch = tail[pos_samples_idx_epoch].astype(int)
+                mask_neg_samples = neg_samples_epoch != -1
+                neg_heads_epoch = np.repeat(head, mask_neg_samples.sum(1)).astype(int)
+                neg_tails_epoch = neg_samples_epoch[mask_neg_samples].astype(int)
+
+                # compute losses
+                loss_a.append(-my_log(compute_low_dim_sims(head_embedding[pos_heads_epoch],
+                                                           head_embedding[pos_tails_epoch],
+                                                           a=a,
+                                                           b=b)).sum())
+                loss_r.append(-my_log(1.0 - compute_low_dim_sims(head_embedding[neg_heads_epoch],
+                                                                 head_embedding[neg_tails_epoch],
+                                                                 a=a,
+                                                                 b=b)).sum())
+            # compute comparison loss functions
+            if pykeops_available:
+                loss_a_epoch_reprod, loss_r_epoch_reprod = reproducing_loss_keops(high_sim=graph.tocoo(),
+                                                                                  embedding=head_embedding,
+                                                                                  a=a,
+                                                                                  b=b)
+                loss_a_reprod.append(loss_a_epoch_reprod)
+                loss_r_reprod.append(loss_r_epoch_reprod)
+
+                loss_a_epoch_exp, loss_r_epoch_exp = expected_loss_keops(high_sim=graph.tocoo(),
+                                                                         embedding = head_embedding,
+                                                                         a=a,
+                                                                         b=b,
+                                                                         negative_sample_rate=negative_sample_rate,
+                                                                         push_tail=True)
+                loss_a_exp.append(loss_a_epoch_exp)
+                loss_r_exp.append(loss_r_epoch_exp)
+            elif not pykeops_available and len(head_embedding) <= 1000:
+                low_sim = compute_low_dim_psims(head_embedding, a, b)
+                loss_a_epoch_reprod, loss_r_epoch_reprod = reproducing_loss(high_sim, low_sim)
+                loss_a_reprod.append(loss_a_epoch_reprod)
+                loss_r_reprod.append(loss_r_epoch_reprod)
+
+                loss_a_epoch_exp, loss_r_epoch_exp = expected_loss(high_sim,
+                                                                   low_sim,
+                                                                   negative_sample_rate=negative_sample_rate,
+                                                                   push_tail=True)
+                loss_a_exp.append(loss_a_epoch_exp)
+                loss_r_exp.append(loss_r_epoch_exp)
+            else:
+                raise RuntimeWarning("Pykeops is not available and there are too many datapoints to compute losses with "
+                                     "numba.")
+
 
         alpha = initial_alpha * (1.0 - (float(n) / float(n_epochs)))
 
         if verbose and n % int(n_epochs / 10) == 0:
             print("\tcompleted ", n, " / ", n_epochs, "epochs")
 
-    return head_embedding
+    # collect all logs in a dict
+    stats = {}
+    if log_samples:
+        stats.update({"pos_samples": pos_samples,
+                      "pos_samples_idx": pos_samples_idx,
+                      "neg_samples": neg_samples})
+    if log_embeddings:
+        stats.update({"embeddings": embeddings})
+    if log_losses:
+        stats.update({"loss_a": loss_a,
+                      "loss_r": loss_r,
+                      "loss_a_reprod": loss_a_reprod,
+                      "loss_r_reprod": loss_r_reprod,
+                      "loss_a_exp": loss_a_exp,
+                      "loss_r_exp": loss_r_exp})
+
+
+    return head_embedding, stats
 
 
 @numba.njit(fastmath=True)
