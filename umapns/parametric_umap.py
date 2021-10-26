@@ -18,7 +18,7 @@ except ImportError:
     
     or you can install the CPU version of Tensorflow using 
 
-    pip install umap-learn[parametric_umap]
+    pip install umum    ap-learn[parametric_umap]
 
     """
     )
@@ -286,6 +286,7 @@ class ParametricUMAP(UMAP):
             self.parametric_embedding,
             self.parametric_reconstruction,
         )
+        self.edge_dataset = edge_dataset
         self.head = tf.constant(tf.expand_dims(head.astype(np.int64), 0))
         self.tail = tf.constant(tf.expand_dims(tail.astype(np.int64), 0))
 
@@ -356,7 +357,7 @@ class ParametricUMAP(UMAP):
 
         # create embedding
         history = self.parametric_model.fit(
-            edge_dataset,
+            self.edge_dataset,
             epochs=self.loss_report_frequency * self.n_training_epochs,
             steps_per_epoch=steps_per_epoch,
             max_queue_size=100,
@@ -644,7 +645,7 @@ def umap_loss(
         repeat_neg = tf.repeat(embedding_from, negative_sample_rate, axis=0)
         embedding_neg_from = tf.gather(
             repeat_neg, tf.random.shuffle(tf.range(tf.shape(repeat_neg)[0]))
-        )
+        ) # essentially shuffles repeat_neg
 
         #  distances between samples (and negative samples)
         distance_embedding = tf.concat(
@@ -782,7 +783,7 @@ def construct_edge_dataset(
     """
 
     def gather_X(edge_to, edge_from):
-        edge_to_batch = tf.gather(X, edge_to)
+        edge_to_batch = tf.gather(X, edge_to)  # selects the "edge_to"-th element of the dataset X
         edge_from_batch = tf.gather(X, edge_from)
         outputs = {"umap": 0}
         if parametric_reconstruction:
@@ -819,7 +820,7 @@ def construct_edge_dataset(
     edges_to_exp, edges_from_exp = (
         np.repeat(head, epochs_per_sample.astype("int")),
         np.repeat(tail, epochs_per_sample.astype("int")),
-    )
+    )  # seems wrong as now an edge with high epochs_per_sample appears often. That is one of low weight appears often.
 
     # shuffle edges
     shuffle_mask = np.random.permutation(range(len(edges_to_exp)))
@@ -829,15 +830,17 @@ def construct_edge_dataset(
     # create edge iterator
     if parametric_embedding:
         edge_dataset = tf.data.Dataset.from_tensor_slices(
-            (edges_to_exp, edges_from_exp)
+            (edges_to_exp, edges_from_exp)  # just stacks both np.arrays to a dataset of tuples
         )
-        edge_dataset = edge_dataset.repeat()
+        edge_dataset = edge_dataset.repeat()  # repeats dataset infinitely
+        # selects a shuffled buffer of 10000 elements,
+        # next ones are adding order (but dataset itself if shuffled)
         edge_dataset = edge_dataset.shuffle(10000)
         edge_dataset = edge_dataset.map(
             gather_X, num_parallel_calls=tf.data.experimental.AUTOTUNE
-        )
-        edge_dataset = edge_dataset.batch(batch_size, drop_remainder=True)
-        edge_dataset = edge_dataset.prefetch(10)
+        )  # applies gather_X across dataset and returns a new dataset, i.e. turn node IDs into data points
+        edge_dataset = edge_dataset.batch(batch_size, drop_remainder=True)  # turns dataset into batches
+        edge_dataset = edge_dataset.prefetch(10)  # improves latency and throughput
     else:
         # nonparametric embedding uses a sham dataset
         gen = make_sham_generator()
