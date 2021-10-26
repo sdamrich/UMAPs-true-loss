@@ -107,6 +107,7 @@ def _optimize_layout_euclidean_single_epoch(
 
     # set up variables for logging samples and loss
     pos_samples = np.zeros_like(epochs_per_sample)
+    # twice negative sample rate, because see definition of n_neg_samples
     neg_samples = - np.ones((len(epochs_per_sample), negative_sample_rate * 2))
     loss_a = 0
     loss_r = 0
