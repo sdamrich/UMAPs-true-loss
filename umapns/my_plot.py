@@ -6,7 +6,7 @@ from .my_utils import get_target_sim, compute_low_dim_psim_keops_embd, compute_l
 
 # Contains functionality for convenient plotting of historgrams and loss functions
 
-# Historgrams
+# Histograms
 def hists_from_graph_embd(graph,
                      embedding,
                      a,
@@ -99,7 +99,69 @@ def histogram_keops(t: pykeops.torch.LazyTensor,
     return hist.astype("int"), bins
 
 # Loss curves
-def plot_all_losses(umapper_aux_data, start=0):
+def get_mean_std_dev_losses(umappers):
+    """
+    compute mean and std of losses over different umapper instances, e.g. with different random seeds
+    :param umappers: list of umapper instances, needs to have aux_data for actual, effective and purported losses and
+                     attractive and repulsive losses
+    :return: tuple of mean losses and std dev losses for each loss type and method
+    """
+    # actual losses
+    losses_a = np.array([umapper.aux_data["loss_a"] for umapper in umappers])
+    mean_loss_a = losses_a.mean(axis=0)
+    std_loss_a = losses_a.std(axis=0)
+
+    losses_r = np.array([umapper.aux_data["loss_r"] for umapper in umappers])
+    mean_loss_r = losses_r.mean(axis=0)
+    std_loss_r = losses_r.std(axis=0)
+
+    losses_total = losses_a + losses_r
+    mean_losses_total = losses_total.mean(axis=0)
+    std_losses_total = losses_total.std(axis=0)
+
+    # purported losses
+    losses_a_reprod = np.array([umapper.aux_data["loss_a_reprod"] for umapper in umappers])
+    mean_loss_a_reprod = losses_a_reprod.mean(axis=0)
+    std_loss_a_reprod = losses_a_reprod.std(axis=0)
+
+    losses_r_reprod = np.array([umapper.aux_data["loss_r_reprod"] for umapper in umappers])
+    mean_loss_r_reprod = losses_r_reprod.mean(axis=0)
+    std_loss_r_reprod = losses_r_reprod.std(axis=0)
+
+    losses_total_reprod = losses_a_reprod + losses_r_reprod
+    mean_losses_total_reprod = losses_total_reprod.mean(axis=0)
+    std_losses_total_reprod = losses_total_reprod.std(axis=0)
+
+    # effective losses
+    losses_a_exp = np.array([umapper.aux_data["loss_a_exp"] for umapper in umappers])
+    mean_loss_a_exp = losses_a_exp.mean(axis=0)
+    std_loss_a_exp = losses_a_exp.std(axis=0)
+
+    losses_r_exp = np.array([umapper.aux_data["loss_r_exp"] for umapper in umappers])
+    mean_loss_r_exp = losses_r_exp.mean(axis=0)
+    std_loss_r_exp = losses_r_exp.std(axis=0)
+
+    losses_total_exp = losses_a_exp + losses_r_exp
+    mean_losses_total_exp = losses_total_exp.mean(axis=0)
+    std_losses_total_exp = losses_total_exp.std(axis=0)
+
+    mean_losses = [
+        [mean_loss_a, mean_loss_r, mean_losses_total],
+        [mean_loss_a_exp, mean_loss_r_exp, mean_losses_total_exp],
+        [mean_loss_a_reprod, mean_loss_r_reprod, mean_losses_total_reprod]
+    ]
+
+    std_losses = [
+        [std_loss_a, std_loss_r, std_losses_total],
+        [std_loss_a_exp, std_loss_r_exp, std_losses_total_exp],
+        [std_loss_a_reprod, std_loss_r_reprod, std_losses_total_reprod]
+    ]
+
+    return mean_losses, std_losses
+
+
+
+def plot_all_losses(umapper_aux_data, start=0, leg_loc=(0.54, 0.3)):
     """
     Wrapper of c_y_axis that creates np.arrays of all losses from the aux_data of a UMAP instance
     :param umapper_aux_data: dict Auxiliary data of a UMAP instance
@@ -119,7 +181,7 @@ def plot_all_losses(umapper_aux_data, start=0):
                           loss_a_reprod + loss_r_reprod]]
     loss_methods = ["actual", "effective", "purported"]
     loss_types = ["attractive", "repulsive", "total"]
-    return cut_y_axis(losses, loss_methods, loss_types, start=start, log=False)
+    return cut_y_axis(losses, loss_methods, loss_types, start=start, log=False, leg_loc=leg_loc)
 
 def cut_y_axis(losses: list,
                loss_methods: list,
@@ -128,7 +190,11 @@ def cut_y_axis(losses: list,
                log=False,
                cut_low=None,
                start=0,
-               end=None):
+               end=None,
+               step=1,
+               leg_loc=(0.54, 0.3),
+               line_width=3,
+               spread=1):
     """
     Plots loss curves into a figure with cut y-axis
     :param losses: list of lists of floats Outer list over loss methods, inner list over loss types; holds loss values
@@ -146,7 +212,7 @@ def cut_y_axis(losses: list,
     assert len(losses) == len(loss_methods) # correct number of loss methods
     assert len(losses[0]) == len(loss_types)  # correct number of loss types per method
     end = len(losses[0][0]) if end is None else end
-    x = np.arange(start, end)
+    x = np.arange(start, end, step)
     label_prefix = ""
     if log:
         losses = [ [np.log(loss) for loss in loss_data] for loss_data in losses]
@@ -155,10 +221,8 @@ def cut_y_axis(losses: list,
     # style parameters
     alpha  = 1.0
     line_styles = {"actual": "solid",
-                   "effective": (0, (5, 6)),
-                   "purported": "dotted"}
-    line_width = 3
-
+                   "effective": (0, (5*spread, 6 * spread)),
+                   "purported": (0, (1*spread, 1 * spread))}
     # get colors
     cmap = "tab10"
     colors = [list(matplotlib.cm.get_cmap(cmap)(k)) for k in range(matplotlib.cm.get_cmap(cmap).N)]
@@ -183,7 +247,7 @@ def cut_y_axis(losses: list,
         for j, loss_data in enumerate(losses[i]):
             if not loss_method == "purported" or loss_types[j] == "attractive":
                 ax2.plot(x,
-                         loss_data[start:end],
+                         loss_data[start:end:step],
                          c=color_dict[loss_method][loss_types[j]],  #colors[len(loss_types) * i + j],
                          label=f"{label_prefix}{loss_method} {loss_types[j]}",
                          alpha=alpha,
@@ -191,26 +255,29 @@ def cut_y_axis(losses: list,
                          linewidth=line_width)
                 if losses_std is not None:
                     ax2.fill_between(x,
-                             loss_data[start:end] - losses_std[i][j][start:end],
-                             loss_data[start:end] + losses_std[i][j][start:end],
+                             loss_data[start:end:step] - losses_std[i][j][start:end:step],
+                             loss_data[start:end:step] + losses_std[i][j][start:end:step],
                              alpha = 0.25 * alpha,
                     )
-                data_ax2.append(loss_data[start:])
+                data_ax2.append(loss_data[start:end:step])
             else:
+                line_style = line_styles[loss_method]
+                if loss_types[j] == "total":
+                    line_style = (0, (1*spread, 3*spread))
                 ax1.plot(x,
-                         loss_data[start:end],
+                         loss_data[start:end:step],
                          c=color_dict[loss_method][loss_types[j]],  #colors[len(loss_types) * i + j],
                          label=f"{label_prefix}{loss_method} {loss_types[j]}",
                          alpha=alpha,
-                         linestyle=line_styles[loss_method],
+                         linestyle=line_style, #line_styles[loss_method],
                          linewidth=line_width)
                 if losses_std is not None:
                     ax1.fill_between(x,
-                             loss_data[start:end] - losses_std[i][j][start:end],
-                             loss_data[start:end] + losses_std[i][j][start:end],
+                             loss_data[start:end:step] - losses_std[i][j][start:end:step],
+                             loss_data[start:end:step] + losses_std[i][j][start:end:step],
                              alpha = 0.25 * alpha,
                     )
-                data_ax1.append(loss_data[start:])
+                data_ax1.append(loss_data[start:end:step])
 
     # compute cut values
     data_ax1 = np.stack(data_ax1)
@@ -238,7 +305,7 @@ def cut_y_axis(losses: list,
 
     leg = fig.legend(handles2+handles1,
                      labels2+labels1,
-                     loc=(0.54, 0.3),
+                     loc=leg_loc,
                      handlelength=3.0)
 
 
