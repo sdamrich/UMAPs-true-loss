@@ -1,4 +1,4 @@
-name: umapns
+name: umaps_true_loss
 channels:
   - pytorch
   - anaconda
@@ -32,4 +32,3 @@ dependencies:
     - tensorboard==2.4.1
     - tensorflow==2.4.1
     - tqdm==4.60.0
-    - umap-learn==0.5.0
