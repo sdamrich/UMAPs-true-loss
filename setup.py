@@ -3,13 +3,13 @@ from setuptools import setup
 
 
 configuration = {
-    "name": "umapns",
+    "name": "umap",
     "version": "0.1",
     "description": "Loss logging extentions to UMAP",
     "long_description_content_type": "text/x-rst",
     "keywords": "dimension reduction t-sne manifold",
     "license": "MIT",
-    "packages": ["umapns"],
+    "packages": ["umap"],
     "install_requires": [
         "numpy >= 1.17",
         "scikit-learn >= 0.22",
