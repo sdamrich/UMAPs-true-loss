@@ -1,4 +1,4 @@
-This project relies on the packages listed in environment.yml. In particular, its a fork of version 0.5.0 of the UMAP
+This project relies on the packages listed in environment.yml. In particular, it is a fork of version 0.5.0 of the UMAP
 package https://github.com/lmcinnes/umap, which is licensed under:
 
     BSD 3-Clause License
