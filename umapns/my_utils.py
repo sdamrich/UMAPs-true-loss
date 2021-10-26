@@ -4,8 +4,94 @@ import scipy.sparse
 from pykeops.torch import LazyTensor
 import torch
 import umapns
+from sklearn.metrics import pairwise_distances
+from scipy.stats import pearsonr, spearmanr
 
-# Contains untility function, including for computing similarities and losses
+
+# Contains utility function, including for computing similarities and losses
+
+
+def corr_pdist_subsample(x, y, sample_size, seed=0, metric="euclidean"):
+    """
+    Computes correlation between pairwise distances among the x's and among the y's
+    :param x: array of positions for x
+    :param y: array of positions for y
+    :param sample_size: number of points to subsample from x and y for pairwise distance computation
+    :param seed: random seed
+    :param metric: Metric used for distances of x, must be a metric available for sklearn.metrics.pairwise_distances
+    :return: tuple of Pearson and Spearman correlation coefficient
+    """
+    np.random.seed(seed)
+    sample_idx = np.random.randint(len(x), size=sample_size)
+    x_sample = x[sample_idx]
+    y_sample = y[sample_idx]
+
+    x_dists = pairwise_distances(x_sample, metric=metric).flatten()
+    y_dists = pairwise_distances(y_sample, metric="euclidean").flatten()
+
+    pear_r, _ = pearsonr(x_dists, y_dists)
+    spear_r, _ = spearmanr(x_dists, y_dists)
+    return pear_r, spear_r
+
+
+
+
+def acc_kNN(x, y, k, metric="euclidean"):
+    """
+    Computes the accuracy of k nearest neighbors between x and y.
+    :param x: array of positions for first dataset
+    :param y: arraoy of positions for second dataset
+    :param k: number of nearest neighbors considered
+    :param metric: Metric used for distances of x, must be a metric available for sklearn.metrics.pairwise_distances
+    :return: Share of x's k nearest neighbors that are also y's k nearest neighbors
+    """
+    x_kNN = scipy.sparse.coo_matrix((np.ones(len(x)*k),
+                                    (np.repeat(np.arange(x.shape[0]), k),
+                                     kNN_graph(x, k, metric=metric).cpu().numpy().flatten())),
+                                    shape=(len(x), len(x)))
+    y_kNN = scipy.sparse.coo_matrix((np.ones(len(y)*k),
+                                    (np.repeat(np.arange(y.shape[0]), k),
+                                     kNN_graph(y, k).cpu().numpy().flatten())),
+                                    shape=(len(y), len(y)))
+    overlap = x_kNN.multiply(y_kNN)
+    matched_kNNs = overlap.sum()
+    return matched_kNNs / (len(x) * k)
+
+def kNN_graph(x, k, metric="euclidean"):
+    """
+    Pykeops implementation of a k nearest neighbor graph
+    :param x: array containing the dataset
+    :param k: number of neartest neighbors
+    :param metric: Metric used for distances of x, must be "euclidean" or "cosine".
+    :return: array of shape (len(x), k) containing the indices of the k nearest neighbors of each datapoint
+    """
+    x = torch.tensor(x).to("cuda").contiguous()
+    x_i = LazyTensor(x[:, None])
+    x_j = LazyTensor(x[None])
+    if metric == "euclidean":
+        dists = ((x_i - x_j)**2).sum(-1)
+    elif metric == "cosine":
+        scalar_prod = (x_i * x_j).sum(-1)
+        norm_x_i = (x_i**2).sum(-1).sqrt()
+        norm_x_j = (x_j**2).sum(-1).sqrt()
+        dists = 1 - scalar_prod / (norm_x_i * norm_x_j)
+    else:
+        raise NotImplementedError(f"Metric {metric} is not implemented.")
+    knn_idx = dists.argKmin(K=k+1, dim=0)[:, 1:] # use k+1 neighbours and omit first, which is just the point itself
+    return knn_idx
+
+def kNN_dists(x, k):
+    """
+    Pykeops implementation for computing the euclidean distances to the k nearest neighbors
+    :param x: array dataset
+    :param k: int, number of nearest neighbors
+    :return: array of shape (len(x), k) containing the distances to the k nearest neighbors for each datapoint
+    """
+    x = torch.tensor(x).to("cuda").contiguous()
+    x_i = LazyTensor(x[:, None])
+    x_j = LazyTensor(x[None])
+    knn_dists = ((x_i - x_j) ** 2).sum(-1).Kmin(K=k + 1, dim=0)[:, 1:].sqrt()  # use k+1 neighbours and omit first, which is just the point
+    return knn_dists
 
 def compute_loss_table(umapper, data):
     """
@@ -231,6 +317,50 @@ def BCE_loss(high_sim_a, high_sim_r, low_sim):
     return -loss_a, -loss_r
 
 # keops implementations:
+def KL_divergence(high_sim,
+                  a,
+                  b,
+                  embedding,
+                  eps=1e-12,
+                  norm_over_pos=True):
+    """
+    Computes the KL divergence between the high-dimensional p and low-dimensional
+    similarities q. The latter are inferred from the embedding.
+    KL = sum_ij p_ij * log(p_ij / q_ij) = sum_ij p_ij * log(p_ij) - sum_ij p_ij * log(q_ij)
+    --> Only ij with p_ij > 0 need to be considered as 0* log(0) is 0 by
+    convention.
+    :param high_sim: scipy.sparse.coo_matrix high-dimensional similarities
+    :param a: float shape parameter a
+    :param b: float shape parameter b
+    :param embedding: np.array Coordinates of embeddings
+    :return: float, KL divergence
+    """
+    heads = high_sim.row
+    tails = high_sim.col
+
+    # compute low dimensional simiarities on the edges with positive p_ij
+    sq_dist_pos_edges = ((embedding[heads]-embedding[tails])**2).sum(-1)
+    low_sim_pos_edges = low_dim_sim_keops_dist(sq_dist_pos_edges,
+                                               a,
+                                               b,
+                                               squared=True)
+    if norm_over_pos:
+        low_sim_pos_edges_norm = low_sim_pos_edges / low_sim_pos_edges.sum()
+    else:
+        total_low_sim = compute_low_dim_psim_keops_embd(embedding,
+                                                        a,
+                                                        b).sum(1).cpu().numpy().sum()
+        low_sim_pos_edges_norm = low_sim_pos_edges / total_low_sim
+
+
+
+    high_sim_pos_edges_norm = high_sim.data / high_sim.data.sum()
+
+    neg_entropy = (high_sim_pos_edges_norm * my_log(high_sim_pos_edges_norm, eps)).sum()
+    cross_entropy = - (high_sim_pos_edges_norm * my_log(low_sim_pos_edges_norm, eps)).sum()
+    return cross_entropy + neg_entropy
+
+
 def reproducing_loss_keops(high_sim: scipy.sparse.coo_matrix,
                            a,
                            b,
