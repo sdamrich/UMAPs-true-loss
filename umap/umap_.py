@@ -27,18 +27,18 @@ from scipy.sparse import tril as sparse_tril, triu as sparse_triu
 import scipy.sparse.csgraph
 import numba
 
-import umapns.distances as dist
+import umap.distances as dist
 
-import umapns.sparse as sparse
+import umap.sparse as sparse
 
-from umapns.utils import (
+from umap.utils import (
     submatrix,
     ts,
     csr_unique,
     fast_knn_indices,
 )
-from umapns.spectral import spectral_layout
-from umapns.layouts import (
+from umap.spectral import spectral_layout
+from umap.layouts import (
     optimize_layout_euclidean,
     optimize_layout_generic,
     optimize_layout_inverse,
