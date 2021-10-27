@@ -22,7 +22,7 @@ Install the extension of the UMAP package
 python setup.py install
 ```
 
-Download the C. elegans, PBMC and lung cancer dataset and dataset
+Download the C. elegans, PBMC and lung cancer datasets
 ``` 
 cd data
 python get_c_elegans.py
