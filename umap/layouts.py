@@ -1,8 +1,8 @@
 import numpy as np
 import numba
-import umapns.distances as dist
-from umapns.utils import tau_rand_int
-from umapns.my_utils import low_dim_sim_dist, \
+import umap.distances as dist
+from umap.utils import tau_rand_int
+from umap.my_utils import low_dim_sim_dist, \
     my_log, \
     compute_low_dim_psims, \
     compute_low_dim_sims, \

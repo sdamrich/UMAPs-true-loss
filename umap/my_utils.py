@@ -3,7 +3,7 @@ import numba
 import scipy.sparse
 from pykeops.torch import LazyTensor
 import torch
-import umapns
+import umap
 from sklearn.metrics import pairwise_distances
 from scipy.stats import pearsonr, spearmanr
 
@@ -103,7 +103,7 @@ def compute_loss_table(umapper, data):
     """
     filtered_graph = filter_graph(umapper.graph_, umapper.n_epochs)
     high_sim = np.array(filtered_graph.todense())
-    a, b = umapns.umap_.find_ab_params(spread=umapper.spread, min_dist=umapper.min_dist)
+    a, b = umap.umap_.find_ab_params(spread=umapper.spread, min_dist=umapper.min_dist)
 
     low_sim_embd = compute_low_dim_psims(umapper.embedding_, a ,b)
     low_sim_data = compute_low_dim_psims(data, a, b)
