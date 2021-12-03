@@ -9,7 +9,9 @@ from vis_utils.utils import low_dim_sim_dist, \
     reproducing_loss, \
     expected_loss, \
     reproducing_loss_keops, \
-    expected_loss_keops
+    expected_loss_keops,\
+    compute_normalization,\
+    KL_divergence
 try:
     import pykeops
     pykeops_available = True
@@ -271,7 +273,9 @@ def optimize_layout_euclidean(
     densmap_kwds={},
     log_samples=False,
     log_losses=None,
-    log_embeddings=False
+    log_embeddings=False,
+    log_norm=False,
+    log_kl=False
 ):
     """Improve an embedding using stochastic gradient descent to minimize the
     fuzzy set cross entropy between the 1-skeletons of the high dimensional
@@ -360,6 +364,13 @@ def optimize_layout_euclidean(
         loss_r_exp = []
     if log_embeddings:
         embeddings = [head_embedding.copy()]  # first epoch does not updates, so initilization will be recorded twice
+    if log_norm:
+        norm_cauchy = []
+        norm_inv_sq = []
+
+    if log_kl:
+        kl_cauchy = []
+        kl_inv_sq = []
 
     if not pykeops_available:
         high_sim = np.array(graph.todense())
@@ -460,6 +471,7 @@ def optimize_layout_euclidean(
             log_losses
         )
         # collect sampled edges
+        high_sim = graph.tocoo()
         if log_samples:
             pos_samples_idx_epoch = np.nonzero(pos_samples_epoch)
             pos_samples_idx.append(pos_samples_idx_epoch[0])
@@ -501,14 +513,14 @@ def optimize_layout_euclidean(
                                                                  b=b)).sum())
             # compute comparison loss functions
             if pykeops_available:
-                loss_a_epoch_reprod, loss_r_epoch_reprod = reproducing_loss_keops(high_sim=graph.tocoo(),
+                loss_a_epoch_reprod, loss_r_epoch_reprod = reproducing_loss_keops(high_sim=high_sim,
                                                                                   embedding=head_embedding,
                                                                                   a=a,
                                                                                   b=b)
                 loss_a_reprod.append(loss_a_epoch_reprod)
                 loss_r_reprod.append(loss_r_epoch_reprod)
 
-                loss_a_epoch_exp, loss_r_epoch_exp = expected_loss_keops(high_sim=graph.tocoo(),
+                loss_a_epoch_exp, loss_r_epoch_exp = expected_loss_keops(high_sim=high_sim,
                                                                          embedding = head_embedding,
                                                                          a=a,
                                                                          b=b,
@@ -531,6 +543,32 @@ def optimize_layout_euclidean(
             else:
                 raise RuntimeWarning("Pykeops is not available and there are too many datapoints to compute losses with "
                                      "numba.")
+        if log_norm:
+            norm_cauchy.append(compute_normalization(head_embedding,
+                                                     sim_func="cauchy",
+                                                     no_diag=True,
+                                                     a=a,
+                                                     b=b))
+            norm_inv_sq.append(compute_normalization(head_embedding,
+                                                     sim_func="inv_sq",
+                                                     no_diag=True,
+                                                     a=a,
+                                                     b=b))
+        if log_kl:
+            kl_cauchy.append(KL_divergence(high_sim=high_sim,
+                                           embedding=head_embedding,
+                                           a=a,
+                                           b=b,
+                                           sim_func="cauchy",
+                                           norm_over_pos=False))
+            kl_inv_sq.append(KL_divergence(high_sim=high_sim,
+                                           embedding=head_embedding,
+                                           a=a,
+                                           b=b,
+                                           sim_func="inv_sq",
+                                           norm_over_pos=False))
+
+
 
 
         alpha = initial_alpha * (1.0 - (float(n) / float(n_epochs)))
@@ -547,13 +585,19 @@ def optimize_layout_euclidean(
     if log_embeddings:
         stats.update({"embeddings": embeddings})
     if log_losses:
-        stats.update({"loss_a": loss_a,
-                      "loss_r": loss_r,
-                      "loss_a_reprod": loss_a_reprod,
-                      "loss_r_reprod": loss_r_reprod,
-                      "loss_a_exp": loss_a_exp,
-                      "loss_r_exp": loss_r_exp})
+        stats.update({"loss_a": np.array(loss_a),
+                      "loss_r": np.array(loss_r),
+                      "loss_a_reprod": np.array(loss_a_reprod),
+                      "loss_r_reprod": np.array(loss_r_reprod),
+                      "loss_a_exp": np.array(loss_a_exp),
+                      "loss_r_exp": np.array(loss_r_exp)})
+    if log_norm:
+        stats.update({"norm_cauchy": np.array(norm_cauchy),
+                      "norm_inv_sq": np.array(norm_inv_sq)})
 
+    if log_kl:
+        stats.update({"kl_cauchy": np.array(kl_cauchy),
+                      "kl_inv_sq": np.array(kl_inv_sq)})
 
     return head_embedding, stats
 

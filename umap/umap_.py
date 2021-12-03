@@ -931,7 +931,9 @@ def simplicial_set_embedding(
     verbose=False,
     log_samples=False,
     log_losses=None,
-    log_embeddings=False
+    log_embeddings=False,
+    log_norm=False,
+    log_kl=False
 ):
     """Perform a fuzzy simplicial set embedding, using a specified
     initialisation method and then minimizing the fuzzy set cross entropy
@@ -1169,7 +1171,9 @@ def simplicial_set_embedding(
             densmap_kwds=densmap_kwds,
             log_samples=log_samples,
             log_losses=log_losses,
-            log_embeddings=log_embeddings
+            log_embeddings=log_embeddings,
+            log_norm=log_norm,
+            log_kl=log_kl,
         )
     else:
         embedding = optimize_layout_generic(
@@ -1647,7 +1651,9 @@ class UMAP(BaseEstimator):
         disconnection_distance=None,
         log_samples=False,
         log_losses=None,
-        log_embeddings=False
+        log_embeddings=False,
+        log_norm=False,
+        log_kl=False
     ):
         self.n_neighbors = n_neighbors
         self.metric = metric
@@ -1696,6 +1702,8 @@ class UMAP(BaseEstimator):
         self.log_samples = log_samples
         self.log_losses = log_losses
         self.log_embeddings= log_embeddings
+        self.log_norm = log_norm
+        self.log_kl = log_kl
 
     def _validate_parameters(self):
         if self.graph_ is not None and self.target_metric in dist.DISCRETE_METRICS:
@@ -2664,7 +2672,9 @@ class UMAP(BaseEstimator):
             self.verbose,
             log_samples=self.log_samples,
             log_losses=self.log_losses,
-            log_embeddings=self.log_embeddings
+            log_embeddings=self.log_embeddings,
+            log_norm=self.log_norm,
+            log_kl=self.log_kl
         )
 
     def fit_transform(self, X, y=None):
