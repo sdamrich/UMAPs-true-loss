@@ -2,7 +2,7 @@ import numpy as np
 import numba
 import umap.distances as dist
 from umap.utils import tau_rand_int
-from umap.my_utils import low_dim_sim_dist, \
+from vis_utils.utils import low_dim_sim_dist, \
     my_log, \
     compute_low_dim_psims, \
     compute_low_dim_sims, \

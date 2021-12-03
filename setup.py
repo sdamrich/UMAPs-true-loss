@@ -16,6 +16,7 @@ configuration = {
         "scipy >= 1.0",
         "numba >= 0.49",
         "pynndescent >= 0.5",
+        "vis_utils >= 0.1"
     ],
     "extras_require": {
         "plot": [

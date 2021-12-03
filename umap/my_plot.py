@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pykeops
 import matplotlib
-from .my_utils import get_target_sim, compute_low_dim_psim_keops_embd, compute_low_dim_sims
+from vis_utils.utils import get_target_sim, compute_low_dim_psim_keops_embd, compute_low_dim_sims
 
 # Contains functionality for convenient plotting of historgrams and loss functions
 

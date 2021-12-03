@@ -17,6 +17,15 @@ conda env create -f environment.yml
 conda activate umaps_true_loss
 ```
 
+Download and install `vis_utils` package:
+```
+cd ..
+git clone https://github.com/sdamrich/vis_utils
+cd vis_utils
+python setup.py install
+```
+
+
 Install the extension of the UMAP package
 ```
 python setup.py install
