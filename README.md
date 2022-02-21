@@ -1,4 +1,5 @@
-Provides the official implementation of [On UMAP's true loss function](https://arxiv.org/abs/2103.14608).
+This repo extends the official implementation of 
+[On UMAP's true loss function](https://arxiv.org/abs/2103.14608) which can be found [here](https://github.com/hci-unihd/UMAPs-true-loss).
 
 ## TL,DR:
 Adds loss logging capabilities to UMAP and validates that UMAP's optimization procedure optimizes a different loss than 
