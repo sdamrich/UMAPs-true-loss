@@ -275,7 +275,8 @@ def optimize_layout_euclidean(
     log_losses=None,
     log_embeddings=False,
     log_norm=False,
-    log_kl=False
+    log_kl=False,
+    anneal_lr=True
 ):
     """Improve an embedding using stochastic gradient descent to minimize the
     fuzzy set cross entropy between the 1-skeletons of the high dimensional
@@ -341,6 +342,9 @@ def optimize_layout_euclidean(
 
     log_embeddings: bool (optional, default False)
         Specifies if intermediate embeddings should be logged.
+
+    anneal_lr: bool (optional, default True)
+        Specifies if the learning rate is annealed or not.
     Returns
     -------
     embedding: array of shape (n_samples, n_components)
@@ -570,8 +574,8 @@ def optimize_layout_euclidean(
 
 
 
-
-        alpha = initial_alpha * (1.0 - (float(n) / float(n_epochs)))
+        if anneal_lr:
+            alpha = initial_alpha * (1.0 - (float(n) / float(n_epochs)))
 
         if verbose and n % int(n_epochs / 10) == 0:
             print("\tcompleted ", n, " / ", n_epochs, "epochs")
