@@ -186,11 +186,11 @@ def _optimize_layout_euclidean_single_epoch(
                 (n - epoch_of_next_negative_sample[i]) / epochs_per_negative_sample[i]
             )
 
-            for j, p in enumerate(range(n_neg_samples)):
+            for q, p in enumerate(range(n_neg_samples)):
                 k = tau_rand_int(rng_state) % n_vertices
 
                 if log_samples or log_losses == "after":
-                    neg_samples[i, j] = k
+                    neg_samples[i, q] = k
 
                 other = tail_embedding[k]
 
