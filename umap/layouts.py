@@ -104,7 +104,8 @@ def _optimize_layout_euclidean_single_epoch(
     dens_mu,
     dens_mu_tot,
     log_samples = False,
-    log_losses = None
+    log_losses = None,
+    eps=0.001
 ) -> object:
 
     # set up variables for logging samples and loss
@@ -198,7 +199,7 @@ def _optimize_layout_euclidean_single_epoch(
 
                 if dist_squared > 0.0:
                     grad_coeff = 2.0 * gamma * b
-                    grad_coeff /= (0.001 + dist_squared) * (
+                    grad_coeff /= (eps + dist_squared) * (
                         a * pow(dist_squared, b) + 1
                     )
                 elif j == k:
@@ -276,7 +277,8 @@ def optimize_layout_euclidean(
     log_embeddings=False,
     log_norm=False,
     log_kl=False,
-    anneal_lr=True
+    anneal_lr=True,
+    eps=0.001
 ):
     """Improve an embedding using stochastic gradient descent to minimize the
     fuzzy set cross entropy between the 1-skeletons of the high dimensional
@@ -472,7 +474,8 @@ def optimize_layout_euclidean(
             dens_mu,
             dens_mu_tot,
             log_samples,
-            log_losses
+            log_losses,
+            eps=eps
         )
         # collect sampled edges
         high_sim = graph.tocoo()
