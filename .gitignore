@@ -1,6 +1,8 @@
 # old notebooks and code
 notebooks/not_for_release
 data/toy_line
+data/toy_ring/
+data/toy_line/
 # virtual environment
 venv
 
@@ -25,5 +27,5 @@ venv
 
 # metadata from pip-installing repo
 umap_learn.egg-info
-/data/toy_ring/
-/data/toy_line/
+
+
